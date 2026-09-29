@@ -38,14 +38,19 @@ class Nib:
 class Hand:
     """How unsteady the hand is. All distances in font units."""
 
-    warp: float = 7.0  # the whole letter bends a little
-    warp_len: float = 560.0
-    wobble: float = 1.2  # lines are never quite straight
-    pressure: float = 0.10  # the nib swells and thins along a stroke
-    stroke_var: float = 0.08  # every stroke is pressed a little differently
+    warp: float = 10.0  # the whole letter bends a little
+    warp_len: float = 520.0
+    wobble: float = 2.6  # lines are never quite straight
+    pressure: float = 0.13  # the nib swells and thins along a stroke
+    stroke_var: float = 0.11  # every stroke is pressed a little differently
     pool: float = 0.10  # ink pools where the hand slows down, in tight turns
-    blob: float = 0.05  # and where the pen lands
+    blob: float = 0.09  # and where the pen lands (more on some strokes)
     taper: float = 0.14  # and runs thin where it lifts
+    overshoot: float = 20.0  # corners are drawn past the turn
+    through: float = 0.55  # chance that a stroke ending on another runs through it
+    through_len: tuple = (16.0, 34.0)
+    rough: float = 2.2  # ragged edge where ink bleeds into paper
+    rough_fine: float = 0.55  # share of the finest ripple in that edge
     rotate: float = 0.9  # degrees of tilt per glyph
     shift: float = 6.0  # baseline bounce
     scale: float = 0.012  # size drift
@@ -84,7 +89,7 @@ def _tucks(placed, width):
     for i, a in enumerate(placed):
         flags = []
         for end in (a[0], a[-1]):
-            hit = False
+            hit = None
             for j, b in enumerate(placed):
                 if i == j or len(b) < 2:
                     continue
@@ -94,10 +99,60 @@ def _tucks(placed, width):
                     continue
                 s = _arclength(b)
                 if min(s[k], s[-1] - s[k]) > 0.6 * width:
-                    hit = True
+                    other = b[min(k + 2, len(b) - 1)] - b[max(k - 2, 0)]
+                    mine = a[min(3, len(a) - 1)] - a[0] if end is a[0] else a[-1] - a[max(len(a) - 4, 0)]
+                    cos = abs(np.dot(other, mine)) / max(np.linalg.norm(other) * np.linalg.norm(mine), 1e-9)
+                    hit = "steep" if cos < 0.57 else "shallow"
                     break
             flags.append(hit)
         out.append(tuple(flags))
+    return out
+
+
+def _extend(pts, at_start, length, step=4.0):
+    """Carry a stroke on past its end, straight along its last direction."""
+    if length <= 0 or len(pts) < 2:
+        return pts
+    if at_start:
+        d = pts[0] - pts[min(3, len(pts) - 1)]
+    else:
+        d = pts[-1] - pts[max(len(pts) - 4, 0)]
+    n = np.linalg.norm(d)
+    if n < 1e-9:
+        return pts
+    d /= n
+    t = np.arange(step, length + 1e-6, step)
+    if len(t) == 0 or t[-1] < length:
+        t = np.r_[t, length]
+    if at_start:
+        return np.vstack([pts[0] + d * t[::-1, None], pts])
+    return np.vstack([pts, pts[-1] + d * t[:, None]])
+
+
+def roughen(contours, r, amp, fine=0.55):
+    """Ragged ink edge: each outline pushed in and out along its normal."""
+    if not amp:
+        return contours
+    out = []
+    for c in contours:
+        c = np.vstack([c, c[:1]])
+        seg = np.linalg.norm(np.diff(c, axis=0), axis=1)
+        s = np.r_[0.0, np.cumsum(seg)]
+        per = s[-1]
+        if per < 60:
+            out.append(c[:-1])
+            continue
+        n = max(12, int(per / 3.5))
+        u = np.linspace(0.0, per, n, endpoint=False)
+        pts = np.stack([np.interp(u, s, c[:, 0]), np.interp(u, s, c[:, 1])], axis=1)
+        t = np.roll(pts, -1, axis=0) - np.roll(pts, 1, axis=0)
+        t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-9)
+        nrm = np.stack([t[:, 1], -t[:, 0]], axis=1)
+        d = np.zeros(n)
+        for wl, wt in ((58.0, fine), (120.0, 0.8), (260.0, 0.6)):
+            k = max(1, int(round(per / wl)))
+            d += wt * np.sin(2 * np.pi * k * u / per + r.uniform(0, 2 * np.pi))
+        out.append(pts + nrm * (amp * d / 1.2)[:, None])
     return out
 
 
@@ -231,7 +286,7 @@ def ink(strokes, nib, hand, seed, pose=None):
             float(r.uniform(-hand.shift, hand.shift)),
             1.0 + float(r.uniform(-hand.scale, hand.scale)),
         )
-    tilt, lift, size = pose
+    tilt, lift, size = pose[:3]
     ang = np.radians(tilt)
     rot = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
     foot = np.array([center[0], 0.0])  # letters grow up from the baseline
@@ -244,10 +299,16 @@ def ink(strokes, nib, hand, seed, pose=None):
         if warp is not None:
             pts = warp(pts)
         placed.append(_dedupe(pts))
-    tucks = _tucks(placed, nib.width)
+    joins = _tucks(placed, nib.width)
 
     polys = []
-    for st, pts, (tuck0, tuck1) in zip(strokes, placed, tucks):
+    for st, pts, (join0, join1) in zip(strokes, placed, joins):
+        # a stroke that meets another square-on sometimes runs straight through it
+        tuck0, tuck1 = join0 is not None, join1 is not None
+        if join0 == "steep" and r.random() < hand.through:
+            pts, tuck0 = _extend(pts, True, r.uniform(*hand.through_len)), False
+        if join1 == "steep" and r.random() < hand.through:
+            pts, tuck1 = _extend(pts, False, r.uniform(*hand.through_len)), False
         s = _arclength(pts)
         total = s[-1] if len(s) else 0.0
         if hand.wobble and st.hand and len(pts) > 2:
@@ -260,7 +321,7 @@ def ink(strokes, nib, hand, seed, pose=None):
         w *= 1.0 + hand.stroke_var * r.uniform(-1.0, 1.0)
         if hand.pool and len(pts) > 6:
             w *= 1.0 + hand.pool * _slowness(pts, s)
-        w *= 1.0 + hand.blob * (not tuck0) * np.exp(-s / 30.0)
+        w *= 1.0 + hand.blob * r.uniform(0.3, 1.6) * (not tuck0) * np.exp(-s / 30.0)
         w *= 1.0 - hand.taper * np.clip(1.0 - (total - s) / 60.0, 0.0, 1.0) ** 1.6
         if tuck0:
             w *= 1.0 - 0.3 * np.exp(-s / 20.0)
@@ -270,9 +331,20 @@ def ink(strokes, nib, hand, seed, pose=None):
         if getattr(st, "fill", False) and len(pts) > 2:
             area = _poly_area(pts)
             polys.append(pts if area > 0 else pts[::-1])
-        for piece, pw in split_corners(pts, w):
+        pieces = split_corners(pts, w)
+        for i, (piece, pw) in enumerate(pieces):
+            # a quick hand overshoots its corners
+            if hand.overshoot and len(pieces) > 1:
+                if i > 0 and r.random() < 0.8:
+                    n0 = len(piece)
+                    piece = _extend(piece, True, r.uniform(0.3, 1.0) * hand.overshoot)
+                    pw = np.r_[np.full(len(piece) - n0, pw[0]), pw]
+                if i < len(pieces) - 1 and r.random() < 0.8:
+                    n0 = len(piece)
+                    piece = _extend(piece, False, r.uniform(0.3, 1.0) * hand.overshoot)
+                    pw = np.r_[pw, np.full(len(piece) - n0, pw[-1])]
             if _foldless(piece, pw, nib):
                 polys.append(outline(piece, pw, nib))
             else:
                 polys.extend(stamps(piece, pw, nib))
-    return union(polys)
+    return roughen(union(polys), r, hand.rough * nib.width / 84.0, hand.rough_fine)

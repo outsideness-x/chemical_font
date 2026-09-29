@@ -347,10 +347,14 @@ def compat(ch):
     return [Stroke(s.pts, weight=0.95) for s in strokes(vs)]
 
 
+# Hangul sits a little calmer on the line, with a softer ragged edge
+HANGUL_HAND = {"calm": 0.6, "rough": 1.7, "rough_fine": 0.2}
+
+
 def register(limit=None):
     for ch in COMPAT_CONSONANTS + COMPAT_VOWELS:
         cp = ord(ch)
-        glyph(f"uni{cp:04X}", cp, variants=1, advance=ADVANCE, hand={"calm": 0.6})(lambda c=ch: compat(c))
+        glyph(f"uni{cp:04X}", cp, variants=1, advance=ADVANCE, hand=HANGUL_HAND)(lambda c=ch: compat(c))
     last = 0xD7A3 if limit is None else min(0xD7A3, 0xAC00 + limit - 1)
     for cp in range(0xAC00, last + 1):
-        glyph(f"uni{cp:04X}", cp, variants=1, advance=ADVANCE, hand={"calm": 0.6})(lambda c=cp: syllable(c))
+        glyph(f"uni{cp:04X}", cp, variants=1, advance=ADVANCE, hand=HANGUL_HAND)(lambda c=cp: syllable(c))

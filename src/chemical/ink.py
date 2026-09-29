@@ -14,7 +14,7 @@ from .pen import Hand, Nib, ink
 from .registry import REGISTRY
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".cache", "ink")
-ENGINE_VERSION = "7"  # bump to invalidate every cached outline
+ENGINE_VERSION = "9"  # bump to invalidate every cached outline
 
 NIBS = {
     "marker": dict(width=metrics.PEN, ratio=0.72, angle=32.0, squareness=2.5),
@@ -67,7 +67,7 @@ def _key(strokes, nib, hand, seed, tol):
     return h.hexdigest()
 
 
-def draw_glyph(name, variant=0, strokes=None, nib_name=None, seed_name=None, tol=1.0):
+def draw_glyph(name, variant=0, strokes=None, nib_name=None, seed_name=None, tol=1.25):
     """Return (contours, (xmin, ymin, xmax, ymax)) for one glyph variant.
 
     Contours are lists of segments: ('line', p0, p1) or ('curve', p0, c1, c2, p3).
