@@ -20,6 +20,7 @@ from chemical.registry import REGISTRY  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-hangul", action="store_true", help="skip Hangul syllables")
+    ap.add_argument("--hangul-sample", default=None, help="only the syllables in this text")
     ap.add_argument("--out", default=os.path.join(ROOT, "build"))
     ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--formats", default="ttf,otf,woff2")
@@ -27,8 +28,15 @@ def main():
 
     t0 = time.time()
 
+    sample = set(ord(c) for c in args.hangul_sample) if args.hangul_sample else None
+
     def keep(gd):
-        return not (args.no_hangul and gd.name.startswith("hg_"))
+        syllables = [u for u in gd.unicodes if 0xAC00 <= u <= 0xD7A3]
+        if not syllables:
+            return True
+        if args.no_hangul:
+            return False
+        return sample is None or syllables[0] in sample
 
     jobs = builder.plan(keep)
     results = builder.render(jobs, args.jobs)
