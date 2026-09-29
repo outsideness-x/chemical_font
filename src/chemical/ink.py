@@ -14,7 +14,7 @@ from .pen import Hand, Nib, ink
 from .registry import REGISTRY
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".cache", "ink")
-ENGINE_VERSION = "9"  # bump to invalidate every cached outline
+ENGINE_VERSION = "10"  # bump to invalidate every cached outline
 
 NIBS = {
     "marker": dict(width=metrics.PEN, ratio=0.72, angle=32.0, squareness=2.5),
@@ -30,18 +30,34 @@ HAND = Hand()
 TILTS = (-0.4, -0.8, -1.2, -1.6)  # degrees: all lean the same way, forward
 LIFTS = (-24.0, -8.0, 8.0, 24.0)  # font units
 SIZES = (0.95, 0.983, 1.017, 1.05)
+WIDES = (0.955, 0.985, 1.015, 1.045)  # a hand never writes a letter the same width twice
 
 
 def pose_for(name, variant, calm=1.0):
     deck = rng("pose", name)
-    tilt_i, lift_i, size_i = (deck.permutation(4) for _ in range(3))
+    tilt_i, lift_i, size_i, wide_i = (deck.permutation(4) for _ in range(4))
     v = variant % 4
     j = rng("pose", name, variant)
     return (
         calm * (TILTS[tilt_i[v]] + j.uniform(-0.15, 0.15)),
         calm * (LIFTS[lift_i[v]] + j.uniform(-2.5, 2.5)),
         1.0 + calm * (SIZES[size_i[v]] - 1.0 + j.uniform(-0.004, 0.004)),
+        1.0 + calm * (WIDES[wide_i[v]] - 1.0 + j.uniform(-0.004, 0.004)),
     )
+
+
+def script_hand(gd):
+    """The writing hand differs by script: flicks and lead-ins on lowercase,
+    leftward flicks and steeper rising horizontals in Hangul."""
+    if gd is None or not gd.unicodes:
+        return {}
+    cp = gd.unicodes[0]
+    ch = chr(cp)
+    if 0xAC00 <= cp <= 0xD7A3 or 0x3131 <= cp <= 0x318E:
+        return dict(flick=0.45, flick_dir=-1.0, rise=0.055)
+    if ch.isalpha() and ch.islower():
+        return dict(flick=0.7, flick_dir=1.0, entry=0.5)
+    return {}
 
 
 def variant_name(name, variant):
@@ -79,12 +95,12 @@ def draw_glyph(name, variant=0, strokes=None, nib_name=None, seed_name=None, tol
         return [], (0.0, 0.0, 0.0, 0.0)
     nib_name = nib_name or (gd.nib if gd else "marker")
     nib_spec = NIBS[nib_name]
-    hand = HAND
     calm = 1.0
+    extra = script_hand(gd)
     if gd and gd.hand:
-        extra = dict(gd.hand)
+        extra.update(gd.hand)
         calm = extra.pop("calm", 1.0)
-        hand = replace(hand, **extra)
+    hand = replace(HAND, **extra)
     seed = (seed_name or name, variant)
     pose = pose_for(name, variant, calm)
     key = _key(strokes, nib_spec, (hand, pose), seed, tol)

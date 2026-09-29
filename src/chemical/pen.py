@@ -51,6 +51,11 @@ class Hand:
     through_len: tuple = (16.0, 34.0)
     rough: float = 2.2  # ragged edge where ink bleeds into paper
     rough_fine: float = 0.55  # share of the finest ripple in that edge
+    rise: float = 0.03  # horizontals climb to the right, as in handwriting
+    bow: float = 6.0  # long straight strokes bow a little
+    flick: float = 0.0  # chance of an exit flick on the last down-stroke
+    flick_dir: float = 1.0  # +1 flicks right (Latin, Cyrillic), -1 left (Hangul)
+    entry: float = 0.0  # chance of a small lead-in on the first down-stroke
     rotate: float = 0.9  # degrees of tilt per glyph
     shift: float = 6.0  # baseline bounce
     scale: float = 0.012  # size drift
@@ -107,6 +112,48 @@ def _tucks(placed, width):
             flags.append(hit)
         out.append(tuple(flags))
     return out
+
+
+def _cubic(p0, p1, p2, p3, n=12):
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    m = 1 - t
+    return m**3 * p0 + 3 * m**2 * t * p1 + 3 * m * t**2 * p2 + t**3 * p3
+
+
+def _downward(d, lean=0.6):
+    return d[1] < 0 and abs(d[0]) < lean * abs(d[1])
+
+
+def _with_flick(pts, side, size):
+    """End a down-stroke the way a writing hand does: with a small flick."""
+    end = pts[-1]
+    keep = pts[pts[:, 1] > end[1] + 0.75 * size]
+    if len(keep) < 2:
+        return pts
+    p0 = keep[-1]
+    x = p0[0]
+    curve = _cubic(p0, p0 + [0.0, -0.5 * size], np.array([x + side * 0.2 * size, end[1] - 0.12 * size]),
+                   np.array([x + side * 1.05 * size, end[1] + 0.3 * size]), 14)
+    return np.vstack([keep, curve[1:]])
+
+
+def _with_lead_in(pts, size):
+    """Start a down-stroke with a small hook from the left."""
+    p0 = pts[0]
+    hook = _cubic(p0 + [-size, -0.2 * size], p0 + [-0.75 * size, 0.3 * size], p0 + [-0.05 * size, 0.35 * size], p0, 12)
+    return np.vstack([hook[:-1], pts])
+
+
+def _bowed(pts, r, amount):
+    """Long straight strokes are never ruler-straight: bow them a little."""
+    s = _arclength(pts)
+    total = s[-1]
+    if total < 140 or np.linalg.norm(pts[-1] - pts[0]) < 0.985 * total:
+        return pts
+    d = (pts[-1] - pts[0]) / np.linalg.norm(pts[-1] - pts[0])
+    n = np.array([-d[1], d[0]])
+    bend = r.uniform(-1.0, 1.0) * amount * min(1.0, total / 450.0)
+    return pts + n * (bend * np.sin(np.pi * s / total))[:, None]
 
 
 def _extend(pts, at_start, length, step=4.0):
@@ -287,6 +334,7 @@ def ink(strokes, nib, hand, seed, pose=None):
             1.0 + float(r.uniform(-hand.scale, hand.scale)),
         )
     tilt, lift, size = pose[:3]
+    wide = pose[3] if len(pose) > 3 else 1.0
     ang = np.radians(tilt)
     rot = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
     foot = np.array([center[0], 0.0])  # letters grow up from the baseline
@@ -294,11 +342,37 @@ def ink(strokes, nib, hand, seed, pose=None):
 
     placed = []
     for st in strokes:
-        pts = (st.pts - foot) * size + foot
+        pts = (st.pts - foot) * [size * wide, size] + foot
+        pts = pts + np.stack([np.zeros(len(pts)), hand.rise * (pts[:, 0] - center[0])], axis=1)
         pts = (pts - center) @ rot.T + center + [0.0, lift]
         if warp is not None:
             pts = warp(pts)
-        placed.append(_dedupe(pts))
+        pts = _dedupe(pts)
+        if hand.bow and not st.fill:
+            pts = _bowed(pts, r, hand.bow)
+        placed.append(pts)
+
+    # the writing hand: a lead-in on the first down-stroke, a flick on the last
+    if hand.entry or hand.flick:
+        xs = np.vstack(placed)[:, 0]
+        xmin, xmax = xs.min(), xs.max()
+        ys = np.vstack(placed)[:, 1]
+        if hand.entry and r.random() < hand.entry:
+            for i, pts in enumerate(placed):
+                if len(pts) > 4 and _downward(pts[4] - pts[0], 0.8) and pts[0][0] < xmin + 45 \
+                        and pts[0][1] > ys.max() - 60:
+                    placed[i] = _with_lead_in(pts, 34.0)
+                    break
+        if hand.flick and r.random() < hand.flick:
+            best = None
+            for i, pts in enumerate(placed):
+                if len(pts) > 4 and _downward(pts[-1] - pts[-5]) and pts[-1][0] > xmax - 45:
+                    if hand.flick_dir > 0 and pts[-1][1] > ys.min() + 40:
+                        continue  # Latin flicks only on the baseline
+                    if best is None or pts[-1][0] > placed[best][-1][0]:
+                        best = i
+            if best is not None:
+                placed[best] = _with_flick(placed[best], hand.flick_dir, 44.0 if hand.flick_dir > 0 else 36.0)
     joins = _tucks(placed, nib.width)
 
     polys = []
