@@ -16,17 +16,22 @@ from .noise import Warp, Wobble, rng
 
 
 class Nib:
-    def __init__(self, width, ratio=0.86, angle=32.0):
-        a = width / 2.0
+    """A felt tip: a superellipse (2 = oval, higher = blunter), held at an angle."""
+
+    def __init__(self, width, ratio=0.86, angle=32.0, squareness=2.0, samples=128):
+        a, b = width / 2.0, width / 2.0 * ratio
+        t = np.linspace(0.0, 2 * np.pi, samples, endpoint=False)
+        e = 2.0 / squareness
+        x = a * np.sign(np.cos(t)) * np.abs(np.cos(t)) ** e
+        y = b * np.sign(np.sin(t)) * np.abs(np.sin(t)) ** e
         th = np.radians(angle)
         rot = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
-        self.M = rot @ np.diag([a, a * ratio])
+        self.edge = np.stack([x, y], axis=1) @ rot.T
         self.width = width
 
     def support(self, dirs):
         """Points on the nib's edge whose outward normals are `dirs`."""
-        mt = dirs @ self.M
-        return (mt @ self.M.T) / np.linalg.norm(mt, axis=1, keepdims=True)
+        return self.edge[np.argmax(dirs @ self.edge.T, axis=1)]
 
 
 @dataclass(frozen=True)
@@ -35,10 +40,12 @@ class Hand:
 
     warp: float = 7.0  # the whole letter bends a little
     warp_len: float = 560.0
-    wobble: float = 1.6  # lines are never quite straight
-    pressure: float = 0.045  # the nib presses unevenly
-    blob: float = 0.07  # ink pools where the pen lands
-    taper: float = 0.05  # and thins where it lifts
+    wobble: float = 1.2  # lines are never quite straight
+    pressure: float = 0.10  # the nib swells and thins along a stroke
+    stroke_var: float = 0.08  # every stroke is pressed a little differently
+    pool: float = 0.10  # ink pools where the hand slows down, in tight turns
+    blob: float = 0.05  # and where the pen lands
+    taper: float = 0.14  # and runs thin where it lifts
     rotate: float = 0.9  # degrees of tilt per glyph
     shift: float = 6.0  # baseline bounce
     scale: float = 0.012  # size drift
@@ -51,6 +58,47 @@ def _tangents(pts):
 
 def _arclength(pts):
     return np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]
+
+
+def _slowness(pts, s, radius=70.0, window=40.0):
+    """0..1 along a stroke: 1 where it turns tighter than `radius`."""
+    t = _tangents(pts)
+    ang = np.unwrap(np.arctan2(t[:, 1], t[:, 0]))
+    ds = np.maximum(np.gradient(s), 1e-6)
+    curv = np.abs(np.gradient(ang) / ds)
+    slow = np.clip(curv * radius, 0.0, 1.0)
+    k = max(1, int(window / max(np.median(ds), 1e-3)))
+    kernel = np.ones(2 * k + 1) / (2 * k + 1)
+    return np.convolve(np.pad(slow, k, mode="edge"), kernel, mode="valid")
+
+
+def _tucks(placed, width):
+    """Which stroke ends land inside the body of another stroke (T-joins).
+
+    There the pen eases off, so the end tucks into the other stroke instead
+    of bulging out of its side. Ends that meet other ends (corners) are left
+    alone.
+    """
+    out = []
+    reach = 0.55 * width
+    for i, a in enumerate(placed):
+        flags = []
+        for end in (a[0], a[-1]):
+            hit = False
+            for j, b in enumerate(placed):
+                if i == j or len(b) < 2:
+                    continue
+                d = np.linalg.norm(b - end, axis=1)
+                k = int(np.argmin(d))
+                if d[k] > reach:
+                    continue
+                s = _arclength(b)
+                if min(s[k], s[-1] - s[k]) > 0.6 * width:
+                    hit = True
+                    break
+            flags.append(hit)
+        out.append(tuple(flags))
+    return out
 
 
 def _dedupe(pts, eps=0.5):
@@ -72,6 +120,46 @@ def split_corners(pts, widths, max_turn=50.0):
             pieces.append((pts[start : c + 1], widths[start : c + 1]))
         start = c
     return pieces
+
+
+_HULL_DIRS = 56
+
+
+def _hull_dirs():
+    a = np.linspace(0.0, 2 * np.pi, _HULL_DIRS, endpoint=False)
+    return np.stack([np.cos(a), np.sin(a)], axis=1)
+
+
+def stamps(pts, widths, nib, every=2):
+    """Exact ink of a stroke: the convex hull of each pair of nib stamps.
+
+    Used where a stroke turns tighter than the nib is wide; there an offset
+    outline would fold over itself.
+    """
+    idx = np.r_[np.arange(0, len(pts) - 1, every), len(pts) - 1]
+    P, Wd = pts[idx], widths[idx]
+    if len(P) == 1:
+        P, Wd = np.vstack([P, P + [0.5, 0.0]]), np.r_[Wd, Wd]
+    U = _hull_dirs()
+    E = nib.support(U)
+    h = np.sum(E * U, axis=1)
+    reach = P @ U.T + Wd[:, None] * h[None, :]
+    pick_b = reach[1:] > reach[:-1]
+    a = P[:-1, None, :] + Wd[:-1, None, None] * E[None, :, :]
+    b = P[1:, None, :] + Wd[1:, None, None] * E[None, :, :]
+    return list(np.where(pick_b[..., None], b, a))
+
+
+def _foldless(pts, widths, nib, margin=1.7):
+    """True when no part of the stroke turns tighter than the nib's reach."""
+    if len(pts) < 4:
+        return False
+    t = _tangents(pts)
+    ang = np.unwrap(np.arctan2(t[:, 1], t[:, 0]))
+    ds = np.maximum(np.linalg.norm(np.gradient(pts, axis=0), axis=1), 1e-6)
+    curv = np.abs(np.gradient(ang)) / ds
+    reach = widths * nib.width / 2.0 * margin
+    return bool(np.all(curv * reach < 1.0))
 
 
 def outline(pts, widths, nib, cap_steps=22):
@@ -149,24 +237,39 @@ def ink(strokes, nib, hand, seed, pose=None):
     foot = np.array([center[0], 0.0])  # letters grow up from the baseline
     warp = Warp(r, hand.warp, hand.warp_len) if hand.warp else None
 
-    polys = []
+    placed = []
     for st in strokes:
         pts = (st.pts - foot) * size + foot
         pts = (pts - center) @ rot.T + center + [0.0, lift]
         if warp is not None:
             pts = warp(pts)
-        pts = _dedupe(pts)
+        placed.append(_dedupe(pts))
+    tucks = _tucks(placed, nib.width)
+
+    polys = []
+    for st, pts, (tuck0, tuck1) in zip(strokes, placed, tucks):
         s = _arclength(pts)
         total = s[-1] if len(s) else 0.0
         if hand.wobble and st.hand and len(pts) > 2:
             t = _tangents(pts)
             n = np.stack([-t[:, 1], t[:, 0]], axis=1)
             fade = np.minimum(1.0, np.minimum(s, total - s) / 25.0 + 0.35)
-            pts = pts + n * (Wobble(r, (300.0, 130.0), (1.0, 0.4))(s) * hand.wobble * st.hand * fade)[:, None]
-        w = 1.0 + hand.pressure * Wobble(r, (340.0, 150.0), (1.0, 0.5))(s)
-        w *= 1.0 + hand.blob * np.exp(-s / 16.0)
-        w *= 1.0 - hand.taper * np.exp(-(total - s) / 28.0)
+            pts = pts + n * (Wobble(r, (420.0, 210.0), (1.0, 0.35))(s) * hand.wobble * st.hand * fade)[:, None]
+        # pressure: one or two slow swells along the stroke, never lumps
+        w = 1.0 + hand.pressure * Wobble(r, (900.0, 430.0), (1.0, 0.3))(s)
+        w *= 1.0 + hand.stroke_var * r.uniform(-1.0, 1.0)
+        if hand.pool and len(pts) > 6:
+            w *= 1.0 + hand.pool * _slowness(pts, s)
+        w *= 1.0 + hand.blob * (not tuck0) * np.exp(-s / 30.0)
+        w *= 1.0 - hand.taper * np.clip(1.0 - (total - s) / 60.0, 0.0, 1.0) ** 1.6
+        if tuck0:
+            w *= 1.0 - 0.3 * np.exp(-s / 20.0)
+        if tuck1:
+            w *= 1.0 - 0.3 * np.exp(-(total - s) / 20.0)
         w *= st.weight
         for piece, pw in split_corners(pts, w):
-            polys.append(outline(piece, pw, nib))
+            if _foldless(piece, pw, nib):
+                polys.append(outline(piece, pw, nib))
+            else:
+                polys.extend(stamps(piece, pw, nib))
     return union(polys)

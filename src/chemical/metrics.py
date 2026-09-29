@@ -8,15 +8,15 @@ UPM = 1000
 
 # ink lines
 CAP = 700
-XH = 550  # tall lowercase: mixing cases looks natural
-ASC = 770  # b d h k l rise a little above the capitals
+XH = 565  # tall lowercase: mixing cases looks natural
+ASC = 775  # b d h k l rise a little above the capitals
 DESC = -220
 
-PEN = 76.0  # marker width
+PEN = 84.0  # marker width
 THIN = 26.0  # fineliner width (ss01)
 
 # half of the ink a horizontal stroke adds above/below its centre line
-HV = 34.0
+HV = 35.0
 
 # skeleton lines
 B = HV  # baseline
