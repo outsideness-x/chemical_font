@@ -267,6 +267,9 @@ def ink(strokes, nib, hand, seed, pose=None):
         if tuck1:
             w *= 1.0 - 0.3 * np.exp(-(total - s) / 20.0)
         w *= st.weight
+        if getattr(st, "fill", False) and len(pts) > 2:
+            area = _poly_area(pts)
+            polys.append(pts if area > 0 else pts[::-1])
         for piece, pw in split_corners(pts, w):
             if _foldless(piece, pw, nib):
                 polys.append(outline(piece, pw, nib))

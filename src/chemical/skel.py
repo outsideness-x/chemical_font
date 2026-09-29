@@ -110,17 +110,21 @@ class Path:
 
 
 class Stroke:
-    """One pen movement: a dense centre line plus how hard the pen presses."""
+    """One pen movement: a dense centre line plus how hard the pen presses.
 
-    __slots__ = ("pts", "weight", "hand")
+    A `fill` stroke is a closed outline whose inside is inked solid.
+    """
 
-    def __init__(self, pts, weight=1.0, hand=1.0):
+    __slots__ = ("pts", "weight", "hand", "fill")
+
+    def __init__(self, pts, weight=1.0, hand=1.0, fill=False):
         self.pts = _as(pts)
         self.weight = weight  # width multiplier
         self.hand = hand  # multiplier for this stroke's wobble
+        self.fill = fill
 
     def transformed(self, fn):
-        return Stroke(fn(self.pts), self.weight, self.hand)
+        return Stroke(fn(self.pts), self.weight, self.hand, self.fill)
 
 
 def strokes(*items):
@@ -206,3 +210,20 @@ def loop(x0, y0, x1, y1, k=0.6, start=0, overlap=0.14, tilt=0.0):
         c, s = np.cos(r), np.sin(r)
         pts = (pts - [cx, cy]) @ np.array([[c, s], [-s, c]]) + [cx, cy]
     return pts
+
+
+def filled(pts):
+    """A closed outline inked solid (hearts, stars, bullets)."""
+    return Stroke(pts, fill=True)
+
+
+def light(items, weight=0.78):
+    """Strokes drawn with a lighter hand (superscripts, small marks)."""
+    out = []
+    for st in strokes(items):
+        out.append(Stroke(st.pts, st.weight * weight, st.hand, st.fill))
+    return out
+
+
+def moved(items, fn):
+    return [st.transformed(fn) for st in strokes(items)]
