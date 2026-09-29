@@ -6,22 +6,22 @@ from typing import Callable, Optional, Tuple
 # sidebearings (ink edge to advance edge), by the shape of the letter's side
 SIDES = {
     # lowercase
-    "stem": 44,  # n l h m u (straight vertical sides)
-    "round": 32,  # o c e d b p q (bowls)
-    "open": 22,  # right side of c e r t f (open, light)
-    "arm": 14,  # right side of r, left of j: overhang
-    "diag": 12,  # v w x y (diagonal sides)
-    "tail": 30,
+    "stem": 34,  # n l h m u (straight vertical sides)
+    "round": 25,  # o c e d b p q (bowls)
+    "open": 16,  # right side of c e r t f (open, light)
+    "arm": 8,  # right side of r, left of j: overhang
+    "diag": 6,  # v w x y (diagonal sides)
+    "tail": 22,
     # capitals
-    "Stem": 54,
-    "Round": 40,
-    "Open": 28,
-    "Diag": 14,
+    "Stem": 42,
+    "Round": 30,
+    "Open": 20,
+    "Diag": 8,
     # figures & marks
-    "fig": 40,
-    "punct": 40,
-    "tight": 20,
-    "wide": 70,
+    "fig": 30,
+    "punct": 32,
+    "tight": 14,
+    "wide": 60,
     "zero": 0,
 }
 
