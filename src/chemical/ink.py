@@ -14,7 +14,7 @@ from .pen import Hand, Nib, ink
 from .registry import REGISTRY
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", ".cache", "ink")
-ENGINE_VERSION = "6"  # bump to invalidate every cached outline
+ENGINE_VERSION = "7"  # bump to invalidate every cached outline
 
 NIBS = {
     "marker": dict(width=metrics.PEN, ratio=0.72, angle=32.0, squareness=2.5),
@@ -27,7 +27,7 @@ HAND = Hand()
 # sizes per variant, dealt from a shuffled deck, so the variants of a letter
 # are guaranteed to differ and neighbours (which cycle through variants) never
 # stand the same way.
-TILTS = (-3.8, -1.3, 1.3, 3.8)  # degrees
+TILTS = (-0.4, -0.8, -1.2, -1.6)  # degrees: all lean the same way, forward
 LIFTS = (-24.0, -8.0, 8.0, 24.0)  # font units
 SIZES = (0.95, 0.983, 1.017, 1.05)
 
@@ -38,7 +38,7 @@ def pose_for(name, variant, calm=1.0):
     v = variant % 4
     j = rng("pose", name, variant)
     return (
-        calm * (TILTS[tilt_i[v]] + j.uniform(-0.35, 0.35)),
+        calm * (TILTS[tilt_i[v]] + j.uniform(-0.15, 0.15)),
         calm * (LIFTS[lift_i[v]] + j.uniform(-2.5, 2.5)),
         1.0 + calm * (SIZES[size_i[v]] - 1.0 + j.uniform(-0.004, 0.004)),
     )
