@@ -12,7 +12,7 @@ from fontTools import agl
 
 from .metrics import AT, B, CAP, CT, OS, XH, XT
 from .registry import REGISTRY, glyph
-from .skel import L, Path, S, dot, loop, moved, strokes
+from .skel import L, Path, S, dot, light, loop, moved, strokes
 
 
 def gname(cp):
@@ -56,7 +56,7 @@ def breve():
 
 
 def ring():
-    return strokes(loop(-42, 0, 42, 84, overlap=0.25))
+    return light(loop(-60, -6, 60, 112, overlap=0.25), 0.7)
 
 
 def dotaccent():
@@ -387,3 +387,26 @@ def ldot():
 
 
 LATIN_ACCENTED = list(range(0xC0, 0x100)) + list(range(0x100, 0x180)) + list(range(0x218, 0x21C))
+
+
+# accents on their own (spacing marks), standing where they would over an x-height letter
+
+
+def _spacing(fn, below=False):
+    def draw():
+        y = 0.0 if below else XH + GAP_LC + 34
+        return moved(fn(), lambda p: p + [0.0, y])
+
+    return draw
+
+
+SPACING = [
+    (0x60, "grave", grave), (0xA8, "dieresis", dieresis), (0xAF, "macron", macron),
+    (0xB4, "acute", acute), (0xB8, "cedilla", cedilla, True), (0x2C6, "circumflex", circumflex),
+    (0x2C7, "caron", caron), (0x2D8, "breve", breve), (0x2D9, "dotaccent", dotaccent),
+    (0x2DA, "ring", ring), (0x2DB, "ogonek", ogonek, True), (0x2DC, "tilde", tilde),
+    (0x2DD, "hungarumlaut", hungarumlaut),
+]
+
+for _cp, _name, _fn, *_below in SPACING:
+    glyph(_name, _cp, 40, 40, variants=1)(_spacing(_fn, bool(_below)))
