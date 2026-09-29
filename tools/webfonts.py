@@ -30,9 +30,10 @@ JAMO = list(range(0x3000, 0x3040)) + list(range(0x3131, 0x318F)) + list(range(0x
 
 
 def is_common(cp):
+    """KS X 1001 syllables encode to two bytes; Python spells the rest as
+    eight-byte make-up sequences."""
     try:
-        chr(cp).encode("euc_kr")
-        return True
+        return len(chr(cp).encode("euc_kr")) == 2
     except UnicodeEncodeError:
         return False
 
