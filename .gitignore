@@ -5,3 +5,4 @@ __pycache__/
 build/
 proofs/*.png
 .DS_Store
+.claude/

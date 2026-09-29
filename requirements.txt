@@ -5,3 +5,4 @@ pillow>=10
 brotli>=1.1
 uharfbuzz>=0.40
 freetype-py>=2.4
+opentype-sanitizer>=9
