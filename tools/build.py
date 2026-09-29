@@ -13,7 +13,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from chemical import builder, features  # noqa: E402
+from chemical import builder, features, kern  # noqa: E402
 from chemical.registry import REGISTRY  # noqa: E402
 
 
@@ -27,6 +27,7 @@ def main():
     args = ap.parse_args()
 
     t0 = time.time()
+    os.makedirs(args.out, exist_ok=True)
 
     sample = set(ord(c) for c in args.hangul_sample) if args.hangul_sample else None
 
@@ -47,7 +48,13 @@ def main():
         if j.variant == 0 and j.out == j.src:
             for u in REGISTRY[j.src].unicodes:
                 cmap[u] = j.out
-    fea = features.feature_code(set(order))
+    present = set(order)
+    t = time.time()
+    pairs = kern.compute(placed, present)
+    print(f"  kerned {len(pairs)} class pairs in {time.time() - t:.1f}s")
+    fea = features.feature_code(present, kern.fea(pairs, present))
+    with open(os.path.join(args.out, "features.fea"), "w") as fh:
+        fh.write(fea)
     formats = args.formats.split(",")
     base = os.path.join(args.out, "chemical-Regular")
     if "ttf" in formats or "woff2" in formats:
