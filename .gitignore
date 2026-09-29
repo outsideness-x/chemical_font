@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.cache/
+build/
+proofs/*.png
+.DS_Store

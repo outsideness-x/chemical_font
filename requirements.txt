@@ -1,0 +1,7 @@
+fonttools[woff,unicode,ufo]>=4.60
+skia-pathops>=0.8
+numpy>=1.26
+pillow>=10
+brotli>=1.1
+uharfbuzz>=0.40
+freetype-py>=2.4
